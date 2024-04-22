@@ -32,3 +32,23 @@ class Logger():
         if level > 20:
             self.error_list.append(log_message)
 
+
+
+bigquery_to_pandas_types = {
+    'STRING': 'string',
+    'BYTES': 'bytes',
+    'INTEGER': 'int64',
+    'INT64': 'int64',
+    'FLOAT': 'float64',
+    'FLOAT64': 'float64',
+    'NUMERIC': 'float64',
+    'BOOL': 'bool',
+    'BOOLEAN': 'bool',
+    'DATETIME': 'datetime64',
+    'DATE': 'datetime64',
+    'TIMESTAMP': 'datetime64',
+    'TIME': 'datetime64',
+    'GEOGRAPHY': 'object',  # Pandas does not have a built-in type for geography
+    'ARRAY': 'object',      # For arrays, you might want to handle the conversion separately
+    'STRUCT': 'object'      # For struct, you might want to handle the conversion separately
+}
