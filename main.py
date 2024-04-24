@@ -4,7 +4,11 @@ from google.cloud import storage, bigquery
 import re
 import gcsfs
 import json
-from helpers import Logger, bigquery_to_pandas_types
+from helpers import Logger, bigquery_to_pandas_types, send_telegram_message
+import os
+from dotenv import load_dotenv
+
+load_dotenv()  
 
 # Instantiates a client
 
@@ -153,10 +157,51 @@ def write_to_bigquery(bigquery_client, cfg, source_name, df, logger):
         job = bigquery_client.load_table_from_dataframe(
             df, full_table_id, job_config=job_config
         )  # Make an API request.
-        logger.log(f"Job result: {job.result()}")# Wait for the job to complete.
+        logger.log(f"Job result: {job.result()}")  # Wait for the job to complete.
     except Exception as e:
         logger.log(f"Unable to write to gcp table ({table_id})", 40)
         raise e
+
+
+def move_to_processed_and_zip(storage_client, cfg, file_path, df, source_name, logger):
+    file_name = file_path.rsplit("/")[1]
+    zip_filename = file_name.split(".")[0] + ".zip"
+    gcloud_zip_path = f"gs://{cfg['bucket']}/{cfg['processed_folder']}/{zip_filename}"
+    logger.log(
+        f"zipping file: {gcloud_zip_path} and writing to: {cfg['processed_folder']}"
+    )
+    # df.to_csv('gs://bucket/path')
+    # upload the zip file to the processed folder
+    try:
+        compression_options = dict(method="zip", archive_name=f"{file_name}.txt")
+        df.to_csv(
+            gcloud_zip_path,
+            sep=cfg["sources"][source_name]["sep"],
+            index=False,
+            compression=compression_options,
+        )
+    except Exception as e:
+        logger.log("Unable to write compressed file to processed folder", 40)
+        raise e
+
+    try:
+        logger.log(f"deleting {file_name} from {cfg['raw_folder']}")
+        # delete the current file
+        bucket = storage_client.bucket(cfg["bucket"])
+        blob = bucket.blob(f"{cfg['raw_folder']}/{file_name}")
+        generation_match_precondition = None
+
+        # Optional: set a generation-match precondition to avoid potential race conditions
+        # and data corruptions. The request to delete is aborted if the object's
+        # generation number does not match your precondition.
+        blob.reload()  # Fetch blob metadata to use in generation_match_precondition.
+        generation_match_precondition = blob.generation
+
+        blob.delete(if_generation_match=generation_match_precondition)
+    except Exception as e:
+        logger.log("Unable to delete folder from storage", 40)
+        raise e
+    logger.log("Successfully zipped file and moved to processed")
 
 
 def process_data_source(
@@ -176,24 +221,29 @@ def process_data_source(
     )
 
     for i, file_path in enumerate(raw_files):
-        logger.increment_attempted()
 
+        # comment this out for production
         if i > 0:
             continue
+        logger.log(f"Processing {file_path}")
         try:
+            logger.increment_attempted()
             # read into pandas df
             df_raw = read_file_into_df(cfg, source_name, file_path, logger)
-            df_raw = rename_columns(cfg, logger, df_raw, source_name)
+            df_raw_mod = rename_columns(cfg, logger, df_raw, source_name)
             validate_schema(df_raw, table_schema, logger)
-            df_upload = select_cols(cfg, logger, df_raw, source_name, table_schema)
-            
+            df_upload = select_cols(cfg, logger, df_raw_mod, source_name, table_schema)
+
             write_to_bigquery(bigquery_client, cfg, source_name, df_upload, logger)
+
             logger.increment_succeeded()
+            move_to_processed_and_zip(
+                storage_client, cfg, file_path, df_raw, source_name, logger
+            )
             logger.log(f"Successfully processed {file_path}")
 
         except Exception as e:
             logger.log(f"Unable to process {file_path}: {e}")
-
 
 
 def run():
@@ -227,6 +277,12 @@ def run():
             )
         except Exception as e:
             logger.log(f"Failed to process files for source: {source}: {e}", level=50)
+
+    send_telegram_message(
+        f"Finished ELT function: {logger.files_succeeded}/{logger.files_attempted} files succeeded",
+        os.environ.get("TELEGRAM_TOKEN"),
+        os.environ.get("TELEGRAM_CHAT_ID")
+    )
 
 
 run()

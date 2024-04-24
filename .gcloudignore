@@ -1,0 +1,7 @@
+venv
+smarterjobs-config.json
+etl_config.json
+test.py
+test_files
+.gitignore
+.env
