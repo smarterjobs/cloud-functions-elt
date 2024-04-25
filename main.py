@@ -7,28 +7,36 @@ import json
 from helpers import Logger, bigquery_to_pandas_types, send_telegram_message
 import os
 from dotenv import load_dotenv
+from cloudevents.http import CloudEvent
 
-load_dotenv()  
+import functions_framework
+
+
+# load_dotenv()  
 
 # Instantiates a client
 
 
 def initialize(logger):
+    elt_bucket = 'smarter-jobs'
     try:
-        with open("./etl_config.json") as f:
-            cfg = json.load(f)
-
-        raw_folder = "ELT_raw"
-        bucket_name = "smarter-jobs"
-
+        # with open("./etl_config.json") as f:
+        #     cfg = json.load(f)        
         storage_client = storage.Client()
+        bucket = storage_client.get_bucket(elt_bucket)
+        blob = bucket.blob('config/etl_config.json')
+        # Download the contents of the blob as a string and then parse it using json.loads() method
+        cfg = json.loads(blob.download_as_string(client=None))
+        print(f"Got config for {cfg['dataset_id']}")
+        raw_folder = "ELT_raw"
+
         bigquery_client = bigquery.Client()
         bucket = storage_client.get_bucket(cfg["bucket"])
         dataset_ref = bigquery_client.dataset(cfg["dataset_id"], project=cfg["project"])
         return (
             cfg,
             raw_folder,
-            bucket_name,
+            elt_bucket,
             storage_client,
             bigquery_client,
             dataset_ref,
@@ -223,8 +231,8 @@ def process_data_source(
     for i, file_path in enumerate(raw_files):
 
         # comment this out for production
-        if i > 0:
-            continue
+        # if i > 0:
+        #     continue
         logger.log(f"Processing {file_path}")
         try:
             logger.increment_attempted()
@@ -245,8 +253,10 @@ def process_data_source(
         except Exception as e:
             logger.log(f"Unable to process {file_path}: {e}")
 
-
-def run():
+# Triggered by a change in a storage bucket
+@functions_framework.cloud_event
+def run(cloud_event: CloudEvent) -> tuple:
+# def run():
     logger = Logger()
 
     try:
@@ -285,4 +295,4 @@ def run():
     )
 
 
-run()
+# run()

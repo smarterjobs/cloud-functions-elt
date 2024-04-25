@@ -5,3 +5,4 @@ test.py
 test_files
 .gitignore
 .env
+.git
